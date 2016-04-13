@@ -17,28 +17,67 @@
 package de.heikoseeberger.gabbler.user
 
 import akka.actor.Status.Failure
-import akka.actor.{ Actor, ActorLogging, Props }
-import akka.pattern.pipe
-import akka.http.scaladsl.server.Directives
+import akka.actor.{ Actor, ActorLogging, ActorRef, Props }
 import akka.http.scaladsl.Http
+import akka.http.scaladsl.model.StatusCodes.{
+  Conflict,
+  Created,
+  NoContent,
+  NotFound
+}
+import akka.http.scaladsl.model.headers.Location
+import akka.http.scaladsl.server.Directives
+import akka.pattern.{ ask, pipe }
 import akka.stream.ActorMaterializer
+import akka.util.Timeout
+import de.heikoseeberger.akkahttpcirce.CirceSupport
 import java.net.InetSocketAddress
+import scala.concurrent.ExecutionContext
+import scala.concurrent.duration.FiniteDuration
 
 object UserApi {
 
   final val Name = "user-api"
 
-  def props(address: String, port: Int): Props =
-    Props(new UserApi(address, port))
+  def props(address: String,
+            port: Int,
+            userRepository: ActorRef,
+            userRepositoryTimeout: FiniteDuration): Props =
+    Props(new UserApi(address, port, userRepository)(userRepositoryTimeout))
 
-  private[user] def apply() = {
+  private[user] def apply(
+      userRepository: ActorRef
+  )(implicit userRepositoryTimeout: Timeout, ec: ExecutionContext) = {
+    import CirceSupport._
     import Directives._
+    import UserRepository._
+    import io.circe.generic.auto._
 
     // format: OFF
-    pathSingleSlash {
-      get {
-        complete {
-          "Hello, World!"
+    pathPrefix("users") {
+      pathEnd {
+        get {
+          complete {
+            (userRepository ? GetUsers).mapTo[Users].map(_.users)
+          }
+        } ~
+        post {
+          entity(as[AddUser]) { addUser =>
+            extractUri { uri =>
+              onSuccess(userRepository ? addUser) {
+                case UsernameTaken(username) => complete(Conflict -> s"Username $username taken!")
+                case UserAdded(user)         => complete((Created, Vector(Location(uri.withPath(uri.path / user.id.toString))), user))
+              }
+            }
+          }
+        }
+      } ~
+      path(LongNumber) { id =>
+        delete {
+          onSuccess(userRepository ? RemoveUser(id)) {
+            case IdUnknown(_)  => complete(NotFound -> s"User with id $id not found!")
+            case UserRemoved(_) => complete(NoContent)
+          }
         }
       }
     }
@@ -46,14 +85,17 @@ object UserApi {
   }
 }
 
-final class UserApi(address: String, port: Int)
-    extends Actor
+final class UserApi(address: String, port: Int, userRepository: ActorRef)(
+    implicit userRepositoryTimeout: Timeout
+) extends Actor
     with ActorLogging {
   import context.dispatcher
 
   private implicit val mat = ActorMaterializer()
 
-  Http(context.system).bindAndHandle(UserApi(), address, port).pipeTo(self)
+  Http(context.system)
+    .bindAndHandle(UserApi(userRepository), address, port)
+    .pipeTo(self)
 
   override def receive = {
     case Http.ServerBinding(socketAddress) => handleBinding(socketAddress)

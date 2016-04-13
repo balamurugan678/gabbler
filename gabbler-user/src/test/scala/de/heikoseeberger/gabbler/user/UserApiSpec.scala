@@ -16,27 +16,124 @@
 
 package de.heikoseeberger.gabbler.user
 
-import akka.http.scaladsl.model.StatusCodes.OK
+import akka.actor.ActorRef
+import akka.http.scaladsl.model.StatusCodes.{
+  Conflict,
+  Created,
+  NoContent,
+  NotFound,
+  OK
+}
+import akka.http.scaladsl.model.headers.Location
 import akka.http.scaladsl.testkit.ScalatestRouteTest
-import akka.testkit.TestProbe
+import akka.testkit.{ TestActor, TestDuration, TestProbe }
+import akka.util.Timeout
+import de.heikoseeberger.akkahttpcirce.CirceSupport
 import org.scalatest.{ Matchers, WordSpec }
+import scala.concurrent.duration.DurationInt
 
 class UserApiSpec extends WordSpec with Matchers with ScalatestRouteTest {
+  import CirceSupport._
+  import UserRepository._
+  import io.circe.generic.auto._
+
+  private implicit val timeout = Timeout(1.second.dilated)
+
+  private val user = User(0, "user", "User", "user@gabbler.io")
 
   "UserApi" should {
     "terminate if it can't bind to a socket" in {
-      val probe   = TestProbe()
-      val userApi = system.actorOf(UserApi.props("localhost", 80))
+      val probe = TestProbe()
+      val userApi = system.actorOf(
+        UserApi.props("localhost", 80, system.deadLetters, 1.second.dilated)
+      )
       probe.watch(userApi)
       probe.expectTerminated(userApi)
     }
   }
 
   "UserApi's route" should {
-    """respond to GET / with an OK with a "Hello, World!" body""" in {
-      Get() ~> UserApi() ~> check {
+    "respond to GET /users with an OK and a correct Users" in {
+      val userRepository = TestProbe(): TestProbe // TODO Remove type ascription once IntelliJ is intelligent enough!
+      userRepository.setAutoPilot(new TestActor.AutoPilot {
+        override def run(sender: ActorRef, msg: Any) = msg match {
+          case GetUsers =>
+            sender ! Users(Set(user))
+            TestActor.NoAutoPilot
+        }
+      })
+      Get("/users") ~> UserApi(userRepository.ref) ~> check {
         status shouldBe OK
-        responseAs[String] shouldBe "Hello, World!"
+        responseAs[Set[User]] shouldBe Set(user)
+      }
+    }
+
+    "respond to an invalid POST /users with a Conflict and a correct error message" in {
+      import user._
+      val userRepository = TestProbe(): TestProbe // TODO Remove type ascription once IntelliJ is intelligent enough!
+      userRepository.setAutoPilot(new TestActor.AutoPilot {
+        override def run(sender: ActorRef, msg: Any) = msg match {
+          case AddUser(`username`, `nickname`, `email`) =>
+            sender ! UsernameTaken(username)
+            TestActor.NoAutoPilot
+        }
+      })
+      Post("/users", AddUser(username, nickname, email)) ~> UserApi(
+        userRepository.ref
+      ) ~> check {
+        status shouldBe Conflict
+        responseAs[String] shouldBe s"Username $username taken!"
+      }
+    }
+
+    "respond to a valid POST /users with a Created a correct User" in {
+      import user._
+      val userRepository = TestProbe(): TestProbe // TODO Remove type ascription once IntelliJ is intelligent enough!
+      userRepository.setAutoPilot(new TestActor.AutoPilot {
+        override def run(sender: ActorRef, msg: Any) = msg match {
+          case AddUser(`username`, `nickname`, `email`) =>
+            sender ! UserAdded(user)
+            TestActor.NoAutoPilot
+        }
+      })
+      Post("/users", AddUser(username, nickname, email)) ~> UserApi(
+        userRepository.ref
+      ) ~> check {
+        status shouldBe Created
+        header(Location.name) shouldBe defined
+        header(Location.name).get.value should endWith(s"/users/$id")
+        responseAs[User] shouldBe user
+      }
+    }
+
+    "respond to an invalid DELETE /users/<id> with a NotFound and a correct error message" in {
+      import user._
+      val userRepository = TestProbe(): TestProbe // TODO Remove type ascription once IntelliJ is intelligent enough!
+      userRepository.setAutoPilot(new TestActor.AutoPilot {
+        override def run(sender: ActorRef, msg: Any) = msg match {
+          case RemoveUser(`id`) =>
+            sender ! IdUnknown(id)
+            TestActor.NoAutoPilot
+        }
+      })
+      Delete(s"/users/$id") ~> UserApi(userRepository.ref) ~> check {
+        status shouldBe NotFound
+        responseAs[String] shouldBe s"User with id $id not found!"
+      }
+    }
+
+    "respond to a valid DELETE /users/<id> with a NoContent" in {
+      import user._
+      val userRepository = TestProbe(): TestProbe // TODO Remove type ascription once IntelliJ is intelligent enough!
+      userRepository.setAutoPilot(new TestActor.AutoPilot {
+        override def run(sender: ActorRef, msg: Any) = msg match {
+          case RemoveUser(`id`) =>
+            sender ! UserRemoved(user)
+            TestActor.NoAutoPilot
+        }
+      })
+      Delete(s"/users/$id") ~> UserApi(userRepository.ref) ~> check {
+        status shouldBe NoContent
       }
     }
   }
