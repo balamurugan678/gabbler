@@ -8,9 +8,15 @@ tag=latest
 if [ -n "$2" ]; then
     tag="$2"
 fi
+: ${HOST:=$(ipconfig getifaddr en0)}
+: ${HOST:=$(ipconfig getifaddr en1)}
+: ${HOST:=$(ipconfig getifaddr en2)}
+: ${HOST:=$(ipconfig getifaddr en3)}
+: ${HOST:=$(ipconfig getifaddr en4)}
 
 docker run \
   --detach \
   --name gabbler-user-${n} \
   --publish 800${n}:8000 \
-  hseeberger/gabbler-user:${tag}
+  hseeberger/gabbler-user:${tag} \
+  -Dcassandra-journal.contact-points.0=${HOST}:9042

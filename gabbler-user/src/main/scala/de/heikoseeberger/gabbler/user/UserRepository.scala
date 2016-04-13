@@ -16,7 +16,8 @@
 
 package de.heikoseeberger.gabbler.user
 
-import akka.actor.{ Actor, ActorLogging, Props }
+import akka.actor.{ ActorLogging, Props }
+import akka.persistence.PersistentActor
 
 object UserRepository {
 
@@ -41,18 +42,23 @@ object UserRepository {
   def props: Props = Props(new UserRepository)
 }
 
-final class UserRepository extends Actor with ActorLogging {
+final class UserRepository extends PersistentActor with ActorLogging {
   import UserRepository._
+
+  override val persistenceId = Name
 
   private var users = Map.empty[String, User]
 
-  private var nextId = 0L
-
-  override def receive = {
+  override def receiveCommand = {
     case GetUsers => sender() ! Users(users.valuesIterator.to[Set])
     case AddUser(username, nickname, email) =>
       handleAddUser(username, nickname, email)
     case RemoveUser(id) => handleRemoveUser(id)
+  }
+
+  override def receiveRecover = {
+    case UserAdded(user)   => users += user.username -> user
+    case UserRemoved(user) => users -= user.username
   }
 
   private def handleAddUser(username: String,
@@ -60,19 +66,19 @@ final class UserRepository extends Actor with ActorLogging {
                             email: String) =
     if (users.contains(username))
       sender() ! UsernameTaken(username)
-    else {
-      val user = User(nextId, username, nickname, email)
-      nextId += 1
-      users += username -> user
-      log.info(s"Added user with username $username")
-      sender() ! UserAdded(user)
-    }
+    else
+      persist(UserAdded(User(lastSequenceNr, username, nickname, email))) {
+        userAdded =>
+          receiveRecover(userAdded)
+          log.info(s"Added user with username $username")
+          sender() ! userAdded
+      }
 
   private def handleRemoveUser(id: Long) = {
-    def remove(user: User) = {
-      users -= user.username
+    def remove(user: User) = persist(UserRemoved(user)) { userRemoved =>
+      receiveRecover(userRemoved)
       log.info(s"Removed user with id $id and username ${ user.username }")
-      sender() ! UserRemoved(user)
+      sender() ! userRemoved
     }
     users.valuesIterator.find(_.id == id) match {
       case None       => sender() ! IdUnknown(id)
