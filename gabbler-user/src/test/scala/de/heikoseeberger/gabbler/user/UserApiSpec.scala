@@ -18,6 +18,7 @@ package de.heikoseeberger.gabbler.user
 
 import akka.actor.ActorRef
 import akka.http.scaladsl.model.StatusCodes.{
+  BadRequest,
   Conflict,
   Created,
   NoContent,
@@ -26,16 +27,22 @@ import akka.http.scaladsl.model.StatusCodes.{
 }
 import akka.http.scaladsl.model.headers.Location
 import akka.http.scaladsl.testkit.ScalatestRouteTest
+import akka.stream.scaladsl.Source
 import akka.testkit.{ TestActor, TestDuration, TestProbe }
 import akka.util.Timeout
 import de.heikoseeberger.akkahttpcirce.CirceSupport
+import de.heikoseeberger.akkasse.headers.`Last-Event-ID`
+import de.heikoseeberger.akkasse.{ EventStreamUnmarshalling, ServerSentEvent }
 import org.scalatest.{ Matchers, WordSpec }
+import scala.concurrent.Await
 import scala.concurrent.duration.DurationInt
 
 class UserApiSpec extends WordSpec with Matchers with ScalatestRouteTest {
   import CirceSupport._
+  import EventStreamUnmarshalling._
   import UserRepository._
   import io.circe.generic.auto._
+  import io.circe.syntax._
 
   private implicit val timeout = Timeout(1.second.dilated)
 
@@ -134,6 +141,63 @@ class UserApiSpec extends WordSpec with Matchers with ScalatestRouteTest {
       })
       Delete(s"/users/$id") ~> UserApi(userRepository.ref) ~> check {
         status shouldBe NoContent
+      }
+    }
+
+    "respond to a valid GET /user-events with an OK a correct UserEvents" in {
+      val userRepository = TestProbe(): TestProbe // TODO Remove type ascription once IntelliJ is intelligent enough!
+      userRepository.setAutoPilot(new TestActor.AutoPilot {
+        override def run(sender: ActorRef, msg: Any) = msg match {
+          case GetUserEvents(1) =>
+            sender ! UserEvents(
+              Source(Vector((1L, UserAdded(user)), (2L, UserRemoved(user))))
+            )
+            TestActor.NoAutoPilot
+        }
+      })
+      Get("/user-events") ~> UserApi(userRepository.ref) ~> check {
+        status shouldBe OK
+        val userEvents = responseAs[Source[ServerSentEvent, Any]]
+        val events = Await.result(
+          userEvents.take(2).runFold(Vector.empty[ServerSentEvent])(_ :+ _),
+          10.seconds.dilated
+        )
+        events shouldBe Vector(
+          ServerSentEvent(user.asJson.noSpaces, "user-added", "1"),
+          ServerSentEvent(user.asJson.noSpaces, "user-removed", "2")
+        )
+      }
+    }
+
+    "respond to a valid GET /user-events with the seqNo given by Last-Event-ID with an OK a correct UserEvents" in {
+      val userRepository = TestProbe(): TestProbe // TODO Remove type ascription once IntelliJ is intelligent enough!
+      userRepository.setAutoPilot(new TestActor.AutoPilot {
+        override def run(sender: ActorRef, msg: Any) = msg match {
+          case GetUserEvents(2) =>
+            sender ! UserEvents(Source(Vector((2L, UserRemoved(user)))))
+            TestActor.NoAutoPilot
+        }
+      })
+      Get("/user-events").withHeaders(`Last-Event-ID`("1")) ~> UserApi(
+        userRepository.ref
+      ) ~> check {
+        status shouldBe OK
+        val eventSource = responseAs[Source[ServerSentEvent, Any]]
+        val events = Await.result(
+          eventSource.take(2).runFold(Vector.empty[ServerSentEvent])(_ :+ _),
+          10.seconds.dilated
+        )
+        events shouldBe Vector(
+          ServerSentEvent(user.asJson.noSpaces, "user-removed", "2")
+        )
+      }
+    }
+
+    "respond to a valid GET /user-events with a BadRequest" in {
+      Get("/user-events").withHeaders(`Last-Event-ID`("x")) ~> UserApi(
+        system.deadLetters
+      ) ~> check {
+        status shouldBe BadRequest
       }
     }
   }
