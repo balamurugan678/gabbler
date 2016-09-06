@@ -1,10 +1,18 @@
-lazy val gabbler = project
-  .in(file("."))
-  .enablePlugins(AutomateHeaderPlugin, GitVersioning)
+lazy val gabbler =
+  project
+    .in(file("."))
+    .aggregate(`gabbler-chat`, `gabbler-user`)
+    .enablePlugins(GitVersioning)
 
-libraryDependencies ++= Vector(
-  Library.scalaTest % "test"
-)
+lazy val `gabbler-user` =
+  project.enablePlugins(AutomateHeaderPlugin, JavaAppPackaging, DockerPlugin)
 
-initialCommands := """|import de.heikoseeberger.gabbler._
-                      |""".stripMargin
+lazy val `gabbler-chat` =
+  project.enablePlugins(AutomateHeaderPlugin, JavaAppPackaging, DockerPlugin)
+
+name := "gabbler"
+
+unmanagedSourceDirectories.in(Compile) := Vector.empty
+unmanagedSourceDirectories.in(Test)    := Vector.empty
+
+publishArtifact := false
