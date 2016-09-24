@@ -58,19 +58,33 @@ object UserApi {
       pathEnd {
         get {
           complete {
-            Set.empty[User]
+            (userRepository ? GetUsers).mapTo[Users].map(_.users)
           }
         } ~
         post {
-          complete {
-            "TODO"
+          entity(as[AddUser]) { addUser =>
+            extractUri { uri =>
+              def conflict(username: String) =
+                Conflict -> s"Username $username taken!"
+              def created(user: User) = {
+                val location =
+                  Location(uri.withPath(uri.path / user.id.toString))
+                (Created, Vector(location), user)
+              }
+              onSuccess(userRepository ? addUser) {
+                case UsernameTaken(n) => complete(conflict(n))
+                case UserAdded(u)     => complete(created(u))
+              }
+            }
           }
         }
       } ~
       path(LongNumber) { id =>
         delete {
-          complete {
-            "TODO"
+          def notFound(id: Long) = NotFound -> s"User with id $id not found!"
+          onSuccess(userRepository ? RemoveUser(id)) {
+            case IdUnknown(_)   => complete(notFound(id))
+            case UserRemoved(_) => complete(NoContent)
           }
         }
       }
