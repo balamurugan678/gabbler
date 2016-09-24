@@ -111,7 +111,9 @@ object UserApi {
             try {
               val fromSeqNo = lastEventId.getOrElse("0").trim.toLong + 1
               complete {
-                ???
+                (userRepository ? GetUserEvents(fromSeqNo))
+                  .mapTo[UserEvents]
+                  .map(_.userEvents.map(toServerSentEvent))
               }
             } catch {
               case e: NumberFormatException =>
