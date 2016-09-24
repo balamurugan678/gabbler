@@ -40,26 +40,26 @@ class UserRepositorySpec
       val sender             = TestProbe()
       implicit val senderRef = sender.ref
 
-//      userRepository ! GetUsers
-//      sender.expectMsg(Users(Set.empty))
+      userRepository ! GetUsers
+      sender.expectMsg(Users(Set.empty))
 
-//      userRepository ! AddUser(username, nickname, email)
-//      sender.expectMsg(UserAdded(user))
-//      userRepository ! GetUsers
-//      sender.expectMsg(Users(Set(user)))
-//
-//      userRepository ! AddUser(username,
-//                               "Jon Targaryen",
-//                               "jtargaryen@gabbler.io")
-//      sender.expectMsg(UsernameTaken(username))
-//
-//      userRepository ! RemoveUser(id)
-//      sender.expectMsg(UserRemoved(user))
-//      userRepository ! GetUsers
-//      sender.expectMsg(Users(Set.empty))
-//
-//      userRepository ! RemoveUser(id)
-//      sender.expectMsg(IdUnknown(id))
+      userRepository ! AddUser(username, nickname, email)
+      sender.expectMsg(UserAdded(user))
+      userRepository ! GetUsers
+      sender.expectMsg(Users(Set(user)))
+
+      userRepository ! AddUser(username,
+                               "Jon Targaryen",
+                               "jtargaryen@gabbler.io")
+      sender.expectMsg(UsernameTaken(username))
+
+      userRepository ! RemoveUser(id)
+      sender.expectMsg(UserRemoved(user))
+      userRepository ! GetUsers
+      sender.expectMsg(Users(Set.empty))
+
+      userRepository ! RemoveUser(id)
+      sender.expectMsg(IdUnknown(id))
     }
   }
 
