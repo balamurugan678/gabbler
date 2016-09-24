@@ -16,6 +16,7 @@
 
 package de.heikoseeberger.gabbler.user
 
+import akka.NotUsed
 import akka.actor.{
   Actor,
   ActorLogging,
@@ -23,6 +24,13 @@ import akka.actor.{
   Props,
   SupervisorStrategy,
   Terminated
+}
+import akka.cluster.Cluster
+import akka.cluster.singleton.{
+  ClusterSingletonManager,
+  ClusterSingletonManagerSettings,
+  ClusterSingletonProxy,
+  ClusterSingletonProxySettings
 }
 import scala.concurrent.Await
 import scala.concurrent.duration.Duration
